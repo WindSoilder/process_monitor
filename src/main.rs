@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_channel::Receiver;
 use async_dup::{Arc, Mutex};
 use clap::Clap;
-use heim::process;
+use heim::process::{self, Process};
 use heim::units::{information, ratio, Information};
 use smol::Task;
 use std::process as StdProcess;
@@ -45,13 +45,12 @@ async fn collect_result(receiver: Receiver<Arc<Mutex<ProcessStatus>>>) {
 
 fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
-    let (sender, receiver) = async_channel::unbounded();
+    let (sender, receiver) = async_channel::bounded(1);
     let status = Arc::new(Mutex::new(ProcessStatus::new()));
 
     // get relative process.
     smol::run(async {
         let collector = Task::spawn(collect_result(receiver));
-
         let proc = process::get(opts.pid).await?;
 
         // set ctrl-c handler.
@@ -63,25 +62,26 @@ fn main() -> Result<()> {
         .expect("Error setting ctrl-c handler");
 
         loop {
-            let prev_cpu_usage = proc.cpu_usage().await;
-            // record process information every second.
-            std::thread::sleep(Duration::from_secs(1));
-            let mem_result = proc.memory().await;
-            let cur_cpu_usage = proc.cpu_usage().await;
-            match mem_result {
-                Ok(mem) => {
-                    let current_mem_usage = mem.rss();
-                    let cpu_usage = cur_cpu_usage? - prev_cpu_usage?;
-                    let mut status = status.lock();
-                    status.update_info(current_mem_usage, cpu_usage.get::<ratio::percent>())
-                }
-                Err(_) => {
-                    sender.send(status).await.unwrap();
-                    collector.await;
-                    break;
-                }
+            if let Err(_) = run_one_circle(&proc, &status).await {
+                sender.send(status).await.unwrap();
+                collector.await;
+                break;
             }
         }
         Ok(())
     })
+}
+
+async fn run_one_circle(proc: &Process, status: &Arc<Mutex<ProcessStatus>>) -> Result<()> {
+    let prev_cpu_usage = proc.cpu_usage().await?;
+    // record process information every second.
+    std::thread::sleep(Duration::from_secs(1));
+    let mem_result = proc.memory().await?.rss();
+    let cur_cpu_usage = proc.cpu_usage().await?;
+    let mut status = status.lock();
+    status.update_info(
+        mem_result,
+        (cur_cpu_usage - prev_cpu_usage).get::<ratio::percent>(),
+    );
+    Ok(())
 }
