@@ -3,7 +3,7 @@ use async_channel::Receiver;
 use async_dup::{Arc, Mutex};
 use clap::Clap;
 use heim::process;
-use heim::units::{information, Information};
+use heim::units::{information, ratio, Information};
 use smol::Task;
 use std::process as StdProcess;
 use std::time::Duration;
@@ -16,20 +16,23 @@ struct Opts {
 #[derive(Debug)]
 struct ProcessStatus {
     memory_max: Information,
-    cpu_max: Information,
+    cpu_max: f32,
 }
 
 impl ProcessStatus {
     pub fn new() -> Self {
         ProcessStatus {
             memory_max: Information::new::<information::byte>(0),
-            cpu_max: Information::new::<information::byte>(0),
+            cpu_max: 0.0,
         }
     }
 
-    pub fn update_mem(&mut self, mem: Information) {
+    pub fn update_info(&mut self, mem: Information, cpu: f32) {
         if mem > self.memory_max {
             self.memory_max = mem
+        }
+        if cpu > self.cpu_max {
+            self.cpu_max = cpu
         }
     }
 }
@@ -60,14 +63,17 @@ fn main() -> Result<()> {
         .expect("Error setting ctrl-c handler");
 
         loop {
-            // record every second.
+            let prev_cpu_usage = proc.cpu_usage().await;
+            // record process information every second.
             std::thread::sleep(Duration::from_secs(1));
             let mem_result = proc.memory().await;
+            let cur_cpu_usage = proc.cpu_usage().await;
             match mem_result {
                 Ok(mem) => {
-                    let current_usage = mem.rss();
+                    let current_mem_usage = mem.rss();
+                    let cpu_usage = cur_cpu_usage? - prev_cpu_usage?;
                     let mut status = status.lock();
-                    status.update_mem(current_usage);
+                    status.update_info(current_mem_usage, cpu_usage.get::<ratio::percent>())
                 }
                 Err(_) => {
                     sender.send(status).await.unwrap();
