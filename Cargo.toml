@@ -12,3 +12,5 @@ heim = { version = "0.1.0-beta.3", features = ["process"] }
 smol = "0.1.18"
 anyhow = "1.0.31"
 async-channel = "1.1.1"
+ctrlc = "3.1.4"
+async-dup = "1.1.0"
