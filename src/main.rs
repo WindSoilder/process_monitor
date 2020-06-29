@@ -2,14 +2,12 @@ use anyhow::Result;
 use async_channel::Receiver;
 use async_dup::{Arc, Mutex};
 use clap::Clap;
-use heim::process::{self, Process};
-use heim::units::{information, ratio, Information};
+use heim::{
+    process::{self, Process},
+    units::{information, ratio, Information},
+};
 use smol::Task;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::path::Path;
-use std::process as StdProcess;
-use std::time::Duration;
+use std::{fs::OpenOptions, io::Write, path::Path, process as StdProcess, time::Duration};
 
 #[derive(Clap)]
 struct Opts {
