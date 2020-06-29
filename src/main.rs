@@ -82,8 +82,8 @@ fn main() -> Result<()> {
     let (sender, receiver) = async_channel::bounded(1);
     let status = Arc::new(Mutex::new(ProcessStatus::new()));
 
-    // get relative process.
     smol::run(async {
+        // get relative process.
         let collector = Task::spawn(collect_result(receiver, opts.output.clone()));
         let proc = process::get(opts.pid).await?;
 
