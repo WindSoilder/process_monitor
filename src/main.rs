@@ -5,17 +5,23 @@ use clap::Clap;
 use heim::process::{self, Process};
 use heim::units::{information, ratio, Information};
 use smol::Task;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::Path;
 use std::process as StdProcess;
 use std::time::Duration;
 
 #[derive(Clap)]
 struct Opts {
     pid: i32,
+    output: String,
 }
 
 #[derive(Debug)]
 struct ProcessStatus {
     memory_max: Information,
+    memory_usage: Vec<Information>,
+    cpu_usage: Vec<f32>,
     cpu_max: f32,
 }
 
@@ -23,11 +29,15 @@ impl ProcessStatus {
     pub fn new() -> Self {
         ProcessStatus {
             memory_max: Information::new::<information::byte>(0),
+            memory_usage: vec![],
             cpu_max: 0.0,
+            cpu_usage: vec![],
         }
     }
 
     pub fn update_info(&mut self, mem: Information, cpu: f32) {
+        self.memory_usage.push(mem);
+        self.cpu_usage.push(cpu);
         if mem > self.memory_max {
             self.memory_max = mem
         }
@@ -35,11 +45,37 @@ impl ProcessStatus {
             self.cpu_max = cpu
         }
     }
+
+    pub fn output<T>(&self, f: T) -> Result<()>
+    where
+        T: AsRef<Path>,
+    {
+        let mut file = OpenOptions::new().create(true).write(true).open(f)?;
+        file.write_all(
+            format!(
+                "Memory Max: {}\n",
+                self.memory_max.get::<information::byte>()
+            )
+            .as_bytes(),
+        )?;
+        file.write_all(format!("Cpu Max: {}\n", self.cpu_max).as_bytes())?;
+        let mem_usages: Vec<String> = self
+            .memory_usage
+            .iter()
+            .map(|x| x.get::<information::byte>().to_string())
+            .collect();
+        file.write_all(mem_usages.join(",").as_bytes())?;
+        file.write_all("\n".as_bytes())?;
+        let cpu_usages: Vec<String> = self.cpu_usage.iter().map(|x| x.to_string()).collect();
+        file.write_all(cpu_usages.join(",").as_bytes())?;
+        file.write_all("\n".as_bytes())?;
+        Ok(())
+    }
 }
 
-async fn collect_result(receiver: Receiver<Arc<Mutex<ProcessStatus>>>) {
+async fn collect_result(receiver: Receiver<Arc<Mutex<ProcessStatus>>>, result_file: String) {
     if let Ok(evt) = receiver.recv().await {
-        println!("{:?}", evt);
+        let _ = evt.lock().output(result_file);
     }
 }
 
@@ -50,13 +86,13 @@ fn main() -> Result<()> {
 
     // get relative process.
     smol::run(async {
-        let collector = Task::spawn(collect_result(receiver));
+        let collector = Task::spawn(collect_result(receiver, opts.output.clone()));
         let proc = process::get(opts.pid).await?;
 
         // set ctrl-c handler.
         let status_clone = status.clone();
         ctrlc::set_handler(move || {
-            println!("{:?}", status_clone);
+            let _ = status_clone.lock().output(opts.output.clone());
             StdProcess::exit(0);
         })
         .expect("Error setting ctrl-c handler");
