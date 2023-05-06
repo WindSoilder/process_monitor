@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::{fs::OpenOptions, io::Write, path::Path, time::Duration};
-use sysinfo::{Pid, Process, ProcessExt, System, SystemExt};
+use std::{fs::File, io::Write, path::Path, time::Duration};
+use sysinfo::{Pid, ProcessExt, System, SystemExt};
 
 #[derive(Parser)]
 struct Args {
@@ -44,7 +44,7 @@ impl ProcessStatus {
     where
         T: AsRef<Path>,
     {
-        let mut file = OpenOptions::new().create(true).write(true).open(f)?;
+        let mut file = File::create(f)?;
         file.write_all(format!("Memory Max: {}\n", self.memory_max,).as_bytes())?;
         file.write_all(format!("Cpu Max: {}\n", self.cpu_max).as_bytes())?;
         let mem_usages: Vec<String> = self.memory_usage.iter().map(|x| x.to_string()).collect();
@@ -68,28 +68,51 @@ fn main() -> Result<()> {
         should_exit_clone.store(true, Ordering::SeqCst);
     })
     .expect("Error setting ctrl-c handler");
-    let system = System::new();
+    let mut system = System::new_all();
     loop {
         if should_exit.load(Ordering::SeqCst) {
             status.output(opts.output.clone())?;
             break;
         }
-        match system.process(Pid::from(opts.pid)) {
-            Some(proc) => run_one_circle(proc, &mut status),
-            None => {
-                status.output(opts.output.clone())?;
-                break;
-            }
-        };
+        if run_one_circle(&mut system, &mut status, opts.pid, &opts.output)? {
+            break;
+        }
     }
     Ok(())
 }
 
-fn run_one_circle(proc: &Process, status: &mut ProcessStatus) {
-    let prev_cpu_usage = proc.cpu_usage();
-    // record process information every second.
-    std::thread::sleep(Duration::from_secs(1));
-    let mem_result = proc.memory();
-    let cur_cpu_usage = proc.cpu_usage();
-    status.update_info(mem_result, cur_cpu_usage - prev_cpu_usage);
+fn run_one_circle(
+    system: &mut System,
+    status: &mut ProcessStatus,
+    pid: usize,
+    output: &str,
+) -> Result<bool> {
+    let mut should_exit = false;
+    system.refresh_all();
+    match system.process(Pid::from(pid)) {
+        Some(proc) => {
+            let prev_cpu_usage = proc.cpu_usage();
+            // record process information every second.
+            std::thread::sleep(Duration::from_secs(1));
+            system.refresh_all();
+            match system.process(Pid::from(pid)) {
+                Some(proc) => {
+                    let cur_cpu_usage = proc.cpu_usage();
+                    let mem_result = proc.memory();
+                    println!("{}, {}", mem_result, cur_cpu_usage - prev_cpu_usage);
+                    status.update_info(mem_result, cur_cpu_usage - prev_cpu_usage);
+                }
+                None => {
+                    status.output(output)?;
+                    should_exit = true;
+                }
+            }
+        }
+        None => {
+            status.output(output)?;
+            should_exit = true;
+        }
+    }
+
+    Ok(should_exit)
 }
