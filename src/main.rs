@@ -3,7 +3,7 @@ use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{fs::File, io::Write, path::Path, time::Duration};
-use sysinfo::{Pid, ProcessExt, System, SystemExt};
+use sysinfo::{CpuRefreshKind, Pid, ProcessExt, RefreshKind, System, SystemExt};
 
 #[derive(Parser)]
 struct Args {
@@ -68,7 +68,10 @@ fn main() -> Result<()> {
         should_exit_clone.store(true, Ordering::SeqCst);
     })
     .expect("Error setting ctrl-c handler");
-    let mut system = System::new_all();
+    let refresh_kind = RefreshKind::new()
+        .with_cpu(CpuRefreshKind::new().with_cpu_usage())
+        .with_memory();
+    let mut system = System::new_with_specifics(refresh_kind);
     loop {
         if should_exit.load(Ordering::SeqCst) {
             status.output(opts.output.clone())?;
